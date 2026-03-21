@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:mysql://8.134.110.25:3306/tms_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: lingxitob
+    password: t2bk6mPT58sjdEn3
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # MyBatis-Plus 配置
+  # mapper 扫描可以通过两种方式：
+  # 1）在启动类上使用 @MapperScan（本项目已添加）
+  # 2）通过 mybatis-plus.mapper-locations 扫描 XML（此处保留默认路径）
+
+mybatis-plus:
+  mapper-locations: classpath:/mapper/**/*.xml
+  type-aliases-package: com.test.tms.entity
+
