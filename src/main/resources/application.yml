@@ -13,4 +13,7 @@ spring:
 mybatis-plus:
   mapper-locations: classpath:/mapper/**/*.xml
   type-aliases-package: com.test.tms.entity
+  configuration:
+    # 枚举字段使用 @EnumValue 标记的存库值（与 VARCHAR 列互转）
+    default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
 

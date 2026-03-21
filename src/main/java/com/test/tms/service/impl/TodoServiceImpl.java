@@ -1,21 +1,30 @@
 package com.test.tms.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.test.tms.constants.RecurrenceType;
+import com.test.tms.constants.TodoPriority;
+import com.test.tms.constants.TodoStatus;
 import com.test.tms.entity.Todo;
 import com.test.tms.entity.TodoDependency;
+import com.test.tms.entity.TodoRecurrence;
 import com.test.tms.mapper.TodoDependencyMapper;
 import com.test.tms.mapper.TodoMapper;
+import com.test.tms.mapper.TodoRecurrenceMapper;
 import com.test.tms.model.dto.TodoCreateRequest;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import com.test.tms.service.TodoService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -24,73 +33,67 @@ import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
+@Validated
 public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements TodoService {
 
-    private static final String STATUS_NOT_STARTED = "NOT_STARTED";
-    private static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
-    private static final String STATUS_COMPLETED = "COMPLETED";
-    private static final String STATUS_ARCHIVED = "ARCHIVED";
-
-    private static final String PRIORITY_LOW = "LOW";
-    private static final String PRIORITY_MEDIUM = "MEDIUM";
-    private static final String PRIORITY_HIGH = "HIGH";
-
-    private static final String RECURRENCE_DAILY = "DAILY";
-    private static final String RECURRENCE_WEEKLY = "WEEKLY";
-    private static final String RECURRENCE_MONTHLY = "MONTHLY";
-    private static final String RECURRENCE_CUSTOM = "CUSTOM";
-
     private TodoDependencyMapper todoDependencyMapper;
+    private TodoRecurrenceMapper todoRecurrenceMapper;
+
     @Autowired
     public void setTodoDependencyMapper(TodoDependencyMapper todoDependencyMapper) {
         this.todoDependencyMapper = todoDependencyMapper;
     }
 
+    @Autowired
+    public void setTodoRecurrenceMapper(TodoRecurrenceMapper todoRecurrenceMapper) {
+        this.todoRecurrenceMapper = todoRecurrenceMapper;
+    }
+
     @Override
     @Transactional
-    public Todo createTodo(Long orgId, TodoCreateRequest request) {
-        if (orgId == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orgId is required");
-        }
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body is required");
-        }
-        if (request.getUserId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "userId is required");
-        }
-        if (request.getName() == null || request.getName().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name is required");
-        }
-        if (request.getDueDate() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dueDate is required");
-        }
-        if (request.getStatus() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "status is required");
-        }
-        if (request.getPriority() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "priority is required");
-        }
+    public Todo createTodo(
+            @NotNull @Valid TodoCreateRequest request
+    ) {
+        validateRecurrenceForCreate(request);
 
         LocalDateTime now = LocalDateTime.now();
         Long by = request.getCreatedBy() != null ? request.getCreatedBy() : request.getUpdatedBy();
 
+        TodoRecurrence recurrenceRow = null;
+        String seriesId = null;
+        if (Boolean.TRUE.equals(request.getIsRecurring())) {
+            recurrenceRow = new TodoRecurrence();
+            recurrenceRow.setRecurrenceType(request.getRecurrenceType());
+            recurrenceRow.setRecurrenceInterval(request.getRecurrenceInterval() != null ? request.getRecurrenceInterval() : 1);
+            recurrenceRow.setRecurrenceCron(request.getRecurrenceCron());
+            recurrenceRow.setRootTodoId(null);
+            recurrenceRow.setCreatedAt(now);
+            recurrenceRow.setUpdatedAt(now);
+            recurrenceRow.setCreatedBy(by);
+            recurrenceRow.setUpdatedBy(by);
+            int ins = todoRecurrenceMapper.insert(recurrenceRow);
+            if (ins <= 0 || recurrenceRow.getId() == null) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create recurrence rule");
+            }
+            seriesId = UUID.randomUUID().toString();
+        }
+
         Todo todo = new Todo();
-        todo.setOrgId(orgId);
         todo.setUserId(request.getUserId());
         todo.setName(request.getName());
         todo.setDescription(request.getDescription());
         todo.setDueDate(request.getDueDate());
-        todo.setStatus(normalizeStatus(request.getStatus()));
-        todo.setPriority(normalizePriority(request.getPriority()));
+        todo.setStatus(request.getStatus());
+        todo.setPriority(request.getPriority());
 
-        todo.setIsRecurring(Boolean.TRUE.equals(request.getIsRecurring()));
-        todo.setRecurrenceType(normalizeRecurrenceType(request.getRecurrenceType()));
-        todo.setRecurrenceInterval(request.getRecurrenceInterval() != null ? request.getRecurrenceInterval() : 1);
-        todo.setRecurrenceCron(request.getRecurrenceCron());
+        todo.setSeriesId(seriesId);
+        todo.setParentId(null);
+        todo.setRecurrenceId(recurrenceRow != null ? recurrenceRow.getId() : null);
 
-        todo.setDeletedAt(null);
+        todo.setDeleted(false);
         todo.setCreatedAt(now);
         todo.setUpdatedAt(now);
         todo.setCreatedBy(by);
@@ -101,23 +104,28 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create todo");
         }
 
-        if (STATUS_IN_PROGRESS.equals(todo.getStatus())) {
+        if (recurrenceRow != null && recurrenceRow.getRootTodoId() == null) {
+            recurrenceRow.setRootTodoId(todo.getId());
+            recurrenceRow.setUpdatedAt(LocalDateTime.now());
+            recurrenceRow.setUpdatedBy(by);
+            todoRecurrenceMapper.updateById(recurrenceRow);
+        }
+
+        if (TodoStatus.IN_PROGRESS.equals(todo.getStatus())) {
             validateDependenciesCompleted(todo.getId());
         }
-        if (STATUS_COMPLETED.equals(todo.getStatus()) && Boolean.TRUE.equals(todo.getIsRecurring())) {
+        if (TodoStatus.COMPLETED.equals(todo.getStatus()) && todo.getRecurrenceId() != null) {
             createNextOccurrence(todo, by);
         }
         return todo;
     }
 
     @Override
-    public Todo getTodo(Long orgId, Long id) {
-        if (orgId == null || id == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orgId and id are required");
-        }
-
-        QueryWrapper<Todo> qw = new QueryWrapper<>();
-        qw.eq("id", id).eq("org_id", orgId).isNull("deleted_at");
+    public Todo getTodo(
+            @NotNull @Min(1) Long id
+    ) {
+        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
+        qw.eq(Todo::getId, id).eq(Todo::isDeleted, false);
         Todo todo = this.getBaseMapper().selectOne(qw);
         if (todo == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
@@ -127,43 +135,32 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
 
     @Override
     public IPage<Todo> listTodos(
-            Long orgId,
-            long pageNum,
-            long pageSize,
-            String status,
-            String priority,
+            @Min(1) long pageNum,
+            @Min(1) long pageSize,
+            TodoStatus status,
+            TodoPriority priority,
             LocalDateTime dueFrom,
             LocalDateTime dueTo,
             String sortBy,
             String sortDir
     ) {
-        if (orgId == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orgId is required");
-        }
+        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
+        qw.eq(Todo::isDeleted, false);
 
-        QueryWrapper<Todo> qw = new QueryWrapper<>();
-        qw.eq("org_id", orgId).isNull("deleted_at");
-
-        if (status != null && !status.isBlank()) {
-            qw.eq("status", normalizeStatus(status));
+        if (status != null) {
+            qw.eq(Todo::getStatus, status);
         }
-        if (priority != null && !priority.isBlank()) {
-            qw.eq("priority", normalizePriority(priority));
+        if (priority != null) {
+            qw.eq(Todo::getPriority, priority);
         }
         if (dueFrom != null) {
-            qw.ge("due_date", dueFrom);
+            qw.ge(Todo::getDueDate, dueFrom);
         }
         if (dueTo != null) {
-            qw.le("due_date", dueTo);
+            qw.le(Todo::getDueDate, dueTo);
         }
 
-        String sortColumn = normalizeSortColumn(sortBy);
-        boolean desc = "desc".equalsIgnoreCase(sortDir);
-        if (desc) {
-            qw.orderByDesc(sortColumn);
-        } else {
-            qw.orderByAsc(sortColumn);
-        }
+        applyTodoListOrder(qw, sortBy, sortDir);
 
         Page<Todo> page = new Page<>(pageNum, pageSize);
         return this.getBaseMapper().selectPage(page, qw);
@@ -171,26 +168,20 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
 
     @Override
     @Transactional
-    public void updateTodo(Long orgId, Long id, TodoUpdateRequest request) {
-        if (orgId == null || id == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orgId and id are required");
-        }
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body is required");
-        }
-
-        QueryWrapper<Todo> qw = new QueryWrapper<>();
-        qw.eq("id", id).eq("org_id", orgId).isNull("deleted_at");
+    public void updateTodo(
+            @NotNull @Min(1) Long id,
+            @NotNull @Valid TodoUpdateRequest request
+    ) {
+        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
+        qw.eq(Todo::getId, id).eq(Todo::isDeleted, false);
         Todo existing = this.getBaseMapper().selectOne(qw);
         if (existing == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
         }
 
-        String oldStatus = existing.getStatus();
-        String oldNormalizedStatus = oldStatus == null ? null : oldStatus;
+        TodoStatus oldStatus = existing.getStatus();
         boolean statusWillChange = request.getStatus() != null;
 
-        // update basic fields
         if (request.getName() != null) {
             existing.setName(request.getName());
         }
@@ -201,20 +192,10 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             existing.setDueDate(request.getDueDate());
         }
         if (request.getPriority() != null) {
-            existing.setPriority(normalizePriority(request.getPriority()));
+            existing.setPriority(request.getPriority());
         }
-        if (request.getIsRecurring() != null) {
-            existing.setIsRecurring(request.getIsRecurring());
-        }
-        if (request.getRecurrenceType() != null) {
-            existing.setRecurrenceType(normalizeRecurrenceType(request.getRecurrenceType()));
-        }
-        if (request.getRecurrenceInterval() != null) {
-            existing.setRecurrenceInterval(request.getRecurrenceInterval());
-        }
-        if (request.getRecurrenceCron() != null) {
-            existing.setRecurrenceCron(request.getRecurrenceCron());
-        }
+
+        applyRecurrenceUpdates(existing, request);
 
         Long updatedBy = request.getUpdatedBy();
         LocalDateTime now = LocalDateTime.now();
@@ -222,15 +203,14 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         existing.setUpdatedBy(updatedBy);
 
         if (statusWillChange) {
-            String newStatus = normalizeStatus(request.getStatus());
-            boolean changed = !Objects.equals(oldNormalizedStatus, newStatus);
+            TodoStatus newStatus = request.getStatus();
+            boolean changed = !Objects.equals(oldStatus, newStatus);
             existing.setStatus(newStatus);
 
-            if (changed && STATUS_IN_PROGRESS.equals(newStatus)) {
+            if (changed && newStatus == TodoStatus.IN_PROGRESS) {
                 validateDependenciesCompleted(existing.getId());
             }
-            if (changed && STATUS_COMPLETED.equals(newStatus) && Boolean.TRUE.equals(existing.getIsRecurring())) {
-                // 先更新当前任务，再生成下一次（nextDueDate 基于更新后的 dueDate/周期配置）
+            if (changed && newStatus == TodoStatus.COMPLETED && existing.getRecurrenceId() != null) {
                 this.updateById(existing);
                 createNextOccurrence(existing, updatedBy);
                 return;
@@ -240,14 +220,141 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         this.updateById(existing);
     }
 
+    /**
+     * 创建请求中的循环相关字段校验（替代原类级 Bean 校验）。
+     */
+    private void validateRecurrenceForCreate(TodoCreateRequest request) {
+        Integer interval = request.getRecurrenceInterval();
+        if (interval != null && interval < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceInterval must be >= 1");
+        }
+        if (Boolean.TRUE.equals(request.getIsRecurring())) {
+            if (request.getRecurrenceType() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceType is required when isRecurring is true");
+            }
+        }
+        RecurrenceType type = request.getRecurrenceType();
+        if (type != null && type == RecurrenceType.CUSTOM) {
+            String cron = request.getRecurrenceCron();
+            if (cron == null || cron.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required when recurrenceType is CUSTOM");
+            }
+        }
+    }
+
+    /**
+     * 更新请求中循环相关字段的校验（与创建规则一致，并合并库中已有规则判断 CUSTOM+cron）。
+     */
+    private void validateRecurrencePatchForUpdate(Todo existing, TodoUpdateRequest request) {
+        boolean touched = request.getRecurrenceType() != null
+                || request.getRecurrenceInterval() != null
+                || request.getRecurrenceCron() != null
+                || request.getIsRecurring() != null;
+        if (!touched) {
+            return;
+        }
+        if (request.getRecurrenceInterval() != null && request.getRecurrenceInterval() < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceInterval must be >= 1");
+        }
+        if (Boolean.TRUE.equals(request.getIsRecurring()) && existing.getRecurrenceId() == null) {
+            if (request.getRecurrenceType() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceType is required when isRecurring is true");
+            }
+        }
+        if (existing.getRecurrenceId() != null) {
+            TodoRecurrence rule = loadRecurrence(existing.getRecurrenceId());
+            RecurrenceType effectiveType = request.getRecurrenceType() != null
+                    ? request.getRecurrenceType()
+                    : rule.getRecurrenceType();
+            String effectiveCron = request.getRecurrenceCron() != null
+                    ? request.getRecurrenceCron()
+                    : rule.getRecurrenceCron();
+            if (effectiveType == RecurrenceType.CUSTOM
+                    && (effectiveCron == null || effectiveCron.isBlank())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required when recurrenceType is CUSTOM");
+            }
+        } else if (request.getRecurrenceType() == RecurrenceType.CUSTOM) {
+            String cron = request.getRecurrenceCron();
+            if (cron == null || cron.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required when recurrenceType is CUSTOM");
+            }
+        }
+    }
+
+    /**
+     * 更新与实例关联的循环规则；不支持通过 PATCH 将非循环改为循环（避免歧义）。
+     */
+    private void applyRecurrenceUpdates(Todo existing, TodoUpdateRequest request) {
+        validateRecurrencePatchForUpdate(existing, request);
+
+        boolean touchedRule = request.getRecurrenceType() != null
+                || request.getRecurrenceInterval() != null
+                || request.getRecurrenceCron() != null
+                || request.getIsRecurring() != null;
+
+        if (!touchedRule) {
+            return;
+        }
+
+        if (existing.getRecurrenceId() == null) {
+            if (Boolean.TRUE.equals(request.getIsRecurring())) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Cannot enable recurrence on an existing non-recurring todo via update; create a new recurring todo instead"
+                );
+            }
+            if (request.getRecurrenceType() != null
+                    || request.getRecurrenceInterval() != null
+                    || request.getRecurrenceCron() != null) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "This todo has no recurrence rule; recurrence fields cannot be updated"
+                );
+            }
+            return;
+        }
+
+        if (Boolean.FALSE.equals(request.getIsRecurring())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Cannot disable recurrence on an existing recurring todo via update"
+            );
+        }
+
+        TodoRecurrence rule = loadRecurrence(existing.getRecurrenceId());
+        if (request.getRecurrenceType() != null) {
+            rule.setRecurrenceType(request.getRecurrenceType());
+        }
+        if (request.getRecurrenceInterval() != null) {
+            rule.setRecurrenceInterval(request.getRecurrenceInterval());
+        }
+        if (request.getRecurrenceCron() != null) {
+            rule.setRecurrenceCron(request.getRecurrenceCron());
+        }
+        rule.setUpdatedAt(LocalDateTime.now());
+        rule.setUpdatedBy(request.getUpdatedBy());
+        todoRecurrenceMapper.updateById(rule);
+    }
+
+    private TodoRecurrence loadRecurrence(Long recurrenceId) {
+        TodoRecurrence rule = todoRecurrenceMapper.selectById(recurrenceId);
+        if (rule == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Recurrence rule not found");
+        }
+        return rule;
+    }
+
     @Override
     @Transactional
-    public void softDeleteTodo(Long orgId, Long id, Long updatedBy) {
-        Todo existing = getTodo(orgId, id);
+    public void softDeleteTodo(
+            @NotNull @Min(1) Long id,
+            Long updatedBy
+    ) {
+        Todo existing = getTodo(id);
         LocalDateTime now = LocalDateTime.now();
 
-        existing.setDeletedAt(now);
-        existing.setStatus(STATUS_ARCHIVED);
+        existing.setDeleted(true);
+        existing.setStatus(TodoStatus.ARCHIVED);
         existing.setUpdatedAt(now);
         existing.setUpdatedBy(updatedBy);
 
@@ -258,8 +365,8 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     }
 
     private void validateDependenciesCompleted(Long todoId) {
-        QueryWrapper<TodoDependency> depQw = new QueryWrapper<>();
-        depQw.eq("todo_id", todoId);
+        LambdaQueryWrapper<TodoDependency> depQw = new LambdaQueryWrapper<>();
+        depQw.eq(TodoDependency::getTodoId, todoId);
         List<TodoDependency> dependencies = todoDependencyMapper.selectList(depQw);
         if (dependencies == null || dependencies.isEmpty()) {
             return;
@@ -275,10 +382,10 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             return;
         }
 
-        QueryWrapper<Todo> blockedQw = new QueryWrapper<>();
-        blockedQw.in("id", dependsOnIds)
-                .isNull("deleted_at")
-                .ne("status", STATUS_COMPLETED);
+        LambdaQueryWrapper<Todo> blockedQw = new LambdaQueryWrapper<>();
+        blockedQw.in(Todo::getId, dependsOnIds)
+                .eq(Todo::isDeleted, false)
+                .ne(Todo::getStatus, TodoStatus.COMPLETED);
 
         long blockedCount = this.getBaseMapper().selectCount(blockedQw);
         if (blockedCount > 0) {
@@ -290,147 +397,122 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         if (completedTodo == null || completedTodo.getDueDate() == null) {
             return;
         }
-        if (!Boolean.TRUE.equals(completedTodo.getIsRecurring())) {
+        if (completedTodo.getRecurrenceId() == null) {
             return;
         }
 
-        LocalDateTime nextDueDate = computeNextDueDate(completedTodo);
+        TodoRecurrence rule = loadRecurrence(completedTodo.getRecurrenceId());
+        LocalDateTime nextDueDate = computeNextDueDate(rule, completedTodo.getDueDate());
 
         LocalDateTime now = LocalDateTime.now();
         Todo next = new Todo();
-        next.setOrgId(completedTodo.getOrgId());
         next.setUserId(completedTodo.getUserId());
         next.setName(completedTodo.getName());
         next.setDescription(completedTodo.getDescription());
         next.setDueDate(nextDueDate);
 
-        next.setStatus(STATUS_NOT_STARTED);
+        next.setStatus(TodoStatus.NOT_STARTED);
         next.setPriority(completedTodo.getPriority());
 
-        next.setIsRecurring(completedTodo.getIsRecurring());
-        next.setRecurrenceType(completedTodo.getRecurrenceType());
-        next.setRecurrenceInterval(completedTodo.getRecurrenceInterval());
-        next.setRecurrenceCron(completedTodo.getRecurrenceCron());
+        next.setSeriesId(completedTodo.getSeriesId());
+        next.setParentId(completedTodo.getId());
+        next.setRecurrenceId(completedTodo.getRecurrenceId());
 
-        next.setDeletedAt(null);
+        next.setDeleted(false);
         next.setCreatedAt(now);
         next.setUpdatedAt(now);
         next.setCreatedBy(by);
         next.setUpdatedBy(by);
 
         this.save(next);
+        copyDependenciesToNewTodo(completedTodo.getId(), next.getId(), by, now);
     }
 
-    private LocalDateTime computeNextDueDate(Todo todo) {
-        String recurrenceType = normalizeRecurrenceType(todo.getRecurrenceType());
-        int interval = todo.getRecurrenceInterval() == null ? 1 : todo.getRecurrenceInterval();
-        LocalDateTime dueDate = todo.getDueDate();
+    private void copyDependenciesToNewTodo(Long fromTodoId, Long toTodoId, Long by, LocalDateTime now) {
+        LambdaQueryWrapper<TodoDependency> depQw = new LambdaQueryWrapper<>();
+        depQw.eq(TodoDependency::getTodoId, fromTodoId);
+        List<TodoDependency> list = todoDependencyMapper.selectList(depQw);
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        for (TodoDependency d : list) {
+            TodoDependency nd = new TodoDependency();
+            nd.setTodoId(toTodoId);
+            nd.setDependsOnId(d.getDependsOnId());
+            nd.setCreatedAt(now);
+            nd.setUpdatedAt(now);
+            nd.setCreatedBy(by);
+            nd.setUpdatedBy(by);
+            todoDependencyMapper.insert(nd);
+        }
+    }
 
-        if (RECURRENCE_DAILY.equals(recurrenceType)) {
-            return dueDate.plusDays(interval);
+    private LocalDateTime computeNextDueDate(TodoRecurrence rule, LocalDateTime dueDate) {
+        RecurrenceType recurrenceType = rule.getRecurrenceType();
+        if (recurrenceType == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceType is missing on rule");
         }
-        if (RECURRENCE_WEEKLY.equals(recurrenceType)) {
-            return dueDate.plusWeeks(interval);
-        }
-        if (RECURRENCE_MONTHLY.equals(recurrenceType)) {
-            return dueDate.plusMonths(interval);
-        }
-        if (RECURRENCE_CUSTOM.equals(recurrenceType)) {
-            if (todo.getRecurrenceCron() == null || todo.getRecurrenceCron().isBlank()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required for CUSTOM");
+        int interval = rule.getRecurrenceInterval() == null ? 1 : rule.getRecurrenceInterval();
+
+        return switch (recurrenceType) {
+            case DAILY -> dueDate.plusDays(interval);
+            case WEEKLY -> dueDate.plusWeeks(interval);
+            case MONTHLY -> dueDate.plusMonths(interval);
+            case CUSTOM -> {
+                if (rule.getRecurrenceCron() == null || rule.getRecurrenceCron().isBlank()) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required for CUSTOM");
+                }
+                CronExpression cronExpression = CronExpression.parse(rule.getRecurrenceCron());
+                ZonedDateTime base = ZonedDateTime.of(dueDate, ZoneId.systemDefault());
+                ZonedDateTime next = cronExpression.next(base);
+                if (next == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot compute next dueDate from cron");
+                }
+                yield next.toLocalDateTime();
             }
-            CronExpression cronExpression = CronExpression.parse(todo.getRecurrenceCron());
-            ZonedDateTime base = ZonedDateTime.of(dueDate, ZoneId.systemDefault());
-            ZonedDateTime next = cronExpression.next(base);
-            if (next == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot compute next dueDate from cron");
+        };
+    }
+
+    private void applyTodoListOrder(LambdaQueryWrapper<Todo> qw, String sortBy, String sortDir) {
+        String col = normalizeSortColumn(sortBy);
+        boolean desc = "desc".equalsIgnoreCase(sortDir);
+        switch (col) {
+            case "due_date" -> {
+                if (desc) {
+                    qw.orderByDesc(Todo::getDueDate);
+                } else {
+                    qw.orderByAsc(Todo::getDueDate);
+                }
             }
-            return next.toLocalDateTime();
+            case "priority" -> {
+                if (desc) {
+                    qw.orderByDesc(Todo::getPriority);
+                } else {
+                    qw.orderByAsc(Todo::getPriority);
+                }
+            }
+            case "status" -> {
+                if (desc) {
+                    qw.orderByDesc(Todo::getStatus);
+                } else {
+                    qw.orderByAsc(Todo::getStatus);
+                }
+            }
+            case "name" -> {
+                if (desc) {
+                    qw.orderByDesc(Todo::getName);
+                } else {
+                    qw.orderByAsc(Todo::getName);
+                }
+            }
+            default -> {
+                if (desc) {
+                    qw.orderByDesc(Todo::getDueDate);
+                } else {
+                    qw.orderByAsc(Todo::getDueDate);
+                }
+            }
         }
-
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported recurrenceType: " + todo.getRecurrenceType());
-    }
-
-    private String normalizeStatus(String raw) {
-        if (raw == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "status is required");
-        }
-        String s = raw.trim();
-        String upper = s.toUpperCase(Locale.ROOT);
-        if ("NOT_STARTED".equals(upper) || "NOT STARTED".equals(upper) || "NOT STARTED".equals(s.toUpperCase(Locale.ROOT)) || "NOT STARTED".equals(upper)) {
-            return STATUS_NOT_STARTED;
-        }
-        if ("IN_PROGRESS".equals(upper) || "IN PROGRESS".equals(upper)) {
-            return STATUS_IN_PROGRESS;
-        }
-        if ("COMPLETED".equals(upper) || "DONE".equals(upper)) {
-            return STATUS_COMPLETED;
-        }
-        if ("ARCHIVED".equals(upper) || "ARCHIVE".equals(upper)) {
-            return STATUS_ARCHIVED;
-        }
-        // "Not Started" / "In Progress" / "Completed" / "Archived"
-        if ("Not Started".equalsIgnoreCase(s)) {
-            return STATUS_NOT_STARTED;
-        }
-        if ("In Progress".equalsIgnoreCase(s)) {
-            return STATUS_IN_PROGRESS;
-        }
-        if ("Completed".equalsIgnoreCase(s)) {
-            return STATUS_COMPLETED;
-        }
-        if ("Archived".equalsIgnoreCase(s)) {
-            return STATUS_ARCHIVED;
-        }
-
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported status: " + raw);
-    }
-
-    private String normalizePriority(String raw) {
-        if (raw == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "priority is required");
-        }
-        String upper = raw.trim().toUpperCase(Locale.ROOT);
-        if ("LOW".equals(upper)) {
-            return PRIORITY_LOW;
-        }
-        if ("MEDIUM".equals(upper)) {
-            return PRIORITY_MEDIUM;
-        }
-        if ("HIGH".equals(upper)) {
-            return PRIORITY_HIGH;
-        }
-        // 支持 Low/Medium/High
-        if ("Low".equalsIgnoreCase(raw)) {
-            return PRIORITY_LOW;
-        }
-        if ("Medium".equalsIgnoreCase(raw)) {
-            return PRIORITY_MEDIUM;
-        }
-        if ("High".equalsIgnoreCase(raw)) {
-            return PRIORITY_HIGH;
-        }
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported priority: " + raw);
-    }
-
-    private String normalizeRecurrenceType(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String upper = raw.trim().toUpperCase(Locale.ROOT);
-        if (RECURRENCE_DAILY.equals(upper)) {
-            return RECURRENCE_DAILY;
-        }
-        if (RECURRENCE_WEEKLY.equals(upper)) {
-            return RECURRENCE_WEEKLY;
-        }
-        if (RECURRENCE_MONTHLY.equals(upper)) {
-            return RECURRENCE_MONTHLY;
-        }
-        if (RECURRENCE_CUSTOM.equals(upper)) {
-            return RECURRENCE_CUSTOM;
-        }
-        return upper;
     }
 
     private String normalizeSortColumn(String sortBy) {
@@ -450,8 +532,6 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         if ("name".equals(s) || "todo_name".equals(s)) {
             return "name";
         }
-        // 允许直接传 columnName
         return sortBy;
     }
 }
-
