@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.test.tms.constants.RecurrenceType;
+import com.test.tms.constants.TodoBlockedFilter;
 import com.test.tms.constants.TodoPriority;
 import com.test.tms.constants.TodoStatus;
 import com.test.tms.entity.Todo;
@@ -13,8 +14,10 @@ import com.test.tms.entity.TodoRecurrence;
 import com.test.tms.mapper.TodoDependencyMapper;
 import com.test.tms.mapper.TodoMapper;
 import com.test.tms.mapper.TodoRecurrenceMapper;
+import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
 import com.test.tms.model.dto.TodoUpdateRequest;
+import com.test.tms.service.TodoBlockingDepCountHelper;
 import com.test.tms.service.TodoService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -41,6 +44,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
 
     private TodoDependencyMapper todoDependencyMapper;
     private TodoRecurrenceMapper todoRecurrenceMapper;
+    private TodoBlockingDepCountHelper blockingDepCountHelper;
 
     @Autowired
     public void setTodoDependencyMapper(TodoDependencyMapper todoDependencyMapper) {
@@ -50,6 +54,11 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     @Autowired
     public void setTodoRecurrenceMapper(TodoRecurrenceMapper todoRecurrenceMapper) {
         this.todoRecurrenceMapper = todoRecurrenceMapper;
+    }
+
+    @Autowired
+    public void setBlockingDepCountHelper(TodoBlockingDepCountHelper blockingDepCountHelper) {
+        this.blockingDepCountHelper = blockingDepCountHelper;
     }
 
     @Override
@@ -93,7 +102,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         todo.setParentId(null);
         todo.setRecurrenceId(recurrenceRow != null ? recurrenceRow.getId() : null);
 
-        todo.setDeleted(false);
+        todo.setDeleted(0);
         todo.setCreatedAt(now);
         todo.setUpdatedAt(now);
         todo.setCreatedBy(by);
@@ -124,9 +133,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     public Todo getTodo(
             @NotNull @Min(1) Long id
     ) {
-        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
-        qw.eq(Todo::getId, id).eq(Todo::isDeleted, false);
-        Todo todo = this.getBaseMapper().selectOne(qw);
+        Todo todo = this.getBaseMapper().selectById(id);
         if (todo == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
         }
@@ -141,11 +148,11 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             TodoPriority priority,
             LocalDateTime dueFrom,
             LocalDateTime dueTo,
+            TodoBlockedFilter blockedFilter,
             String sortBy,
             String sortDir
     ) {
         LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
-        qw.eq(Todo::isDeleted, false);
 
         if (status != null) {
             qw.eq(Todo::getStatus, status);
@@ -160,6 +167,8 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             qw.le(Todo::getDueDate, dueTo);
         }
 
+        applyBlockedDependencyFilter(qw, blockedFilter);
+
         applyTodoListOrder(qw, sortBy, sortDir);
 
         Page<Todo> page = new Page<>(pageNum, pageSize);
@@ -172,12 +181,12 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             @NotNull @Min(1) Long id,
             @NotNull @Valid TodoUpdateRequest request
     ) {
-        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
-        qw.eq(Todo::getId, id).eq(Todo::isDeleted, false);
-        Todo existing = this.getBaseMapper().selectOne(qw);
+        Todo existing = this.getBaseMapper().selectById(id);
         if (existing == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
         }
+
+        Todo prerequisiteBefore = snapshotBlockingFields(existing);
 
         TodoStatus oldStatus = existing.getStatus();
         boolean statusWillChange = request.getStatus() != null;
@@ -211,13 +220,15 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
                 validateDependenciesCompleted(existing.getId());
             }
             if (changed && newStatus == TodoStatus.COMPLETED && existing.getRecurrenceId() != null) {
-                this.updateById(existing);
+                blockingDepCountHelper.onPrerequisiteSnapshotAndNow(prerequisiteBefore, existing);
+                requireRowUpdated(this.updateById(existing), "Todo was modified by another request");
                 createNextOccurrence(existing, updatedBy);
                 return;
             }
         }
 
-        this.updateById(existing);
+        blockingDepCountHelper.onPrerequisiteSnapshotAndNow(prerequisiteBefore, existing);
+        requireRowUpdated(this.updateById(existing), "Todo was modified by another request");
     }
 
     /**
@@ -353,14 +364,42 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         Todo existing = getTodo(id);
         LocalDateTime now = LocalDateTime.now();
 
-        existing.setDeleted(true);
+        Todo prerequisiteBefore = snapshotBlockingFields(existing);
+
+        existing.setDeleted(1);
         existing.setStatus(TodoStatus.ARCHIVED);
         existing.setUpdatedAt(now);
         existing.setUpdatedBy(updatedBy);
 
-        boolean updated = this.updateById(existing);
+        blockingDepCountHelper.onPrerequisiteSnapshotAndNow(prerequisiteBefore, existing);
+
+        requireRowUpdated(this.updateById(existing), "Todo was modified by another request");
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void batchUpdateTodoStatus(
+            @NotNull @Valid TodoBatchStatusRequest request
+    ) {
+        List<Long> ids = request.getIds().stream()
+                .filter(Objects::nonNull)
+                .filter(id -> id >= 1)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ids must contain valid positive ids");
+        }
+        for (Long id : ids) {
+            TodoUpdateRequest partial = new TodoUpdateRequest();
+            partial.setStatus(request.getStatus());
+            partial.setUpdatedBy(request.getUpdatedBy());
+            updateTodo(id, partial);
+        }
+    }
+
+    private void requireRowUpdated(boolean updated, String message) {
         if (!updated) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete todo");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, message);
         }
     }
 
@@ -384,7 +423,6 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
 
         LambdaQueryWrapper<Todo> blockedQw = new LambdaQueryWrapper<>();
         blockedQw.in(Todo::getId, dependsOnIds)
-                .eq(Todo::isDeleted, false)
                 .ne(Todo::getStatus, TodoStatus.COMPLETED);
 
         long blockedCount = this.getBaseMapper().selectCount(blockedQw);
@@ -418,7 +456,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         next.setParentId(completedTodo.getId());
         next.setRecurrenceId(completedTodo.getRecurrenceId());
 
-        next.setDeleted(false);
+        next.setDeleted(0);
         next.setCreatedAt(now);
         next.setUpdatedAt(now);
         next.setCreatedBy(by);
@@ -445,6 +483,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             nd.setUpdatedBy(by);
             todoDependencyMapper.insert(nd);
         }
+        blockingDepCountHelper.recalculateBlockingDepCount(toTodoId);
     }
 
     private LocalDateTime computeNextDueDate(TodoRecurrence rule, LocalDateTime dueDate) {
@@ -471,6 +510,28 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
                 yield next.toLocalDateTime();
             }
         };
+    }
+
+    /**
+     * 按冗余字段 {@link Todo#getBlockingDepCount()} 过滤列表（0=非阻塞）。
+     */
+    private void applyBlockedDependencyFilter(LambdaQueryWrapper<Todo> qw, TodoBlockedFilter blockedFilter) {
+        if (blockedFilter == null) {
+            return;
+        }
+        switch (blockedFilter) {
+            case BLOCKED -> qw.gt(Todo::getBlockingDepCount, 0);
+            case UNBLOCKED -> qw.eq(Todo::getBlockingDepCount, 0);
+        }
+    }
+
+    /** 仅拷贝用于判断「是否阻塞他人」的字段。 */
+    private Todo snapshotBlockingFields(Todo t) {
+        Todo s = new Todo();
+        s.setId(t.getId());
+        s.setDeleted(t.getDeleted());
+        s.setStatus(t.getStatus());
+        return s;
     }
 
     private void applyTodoListOrder(LambdaQueryWrapper<Todo> qw, String sortBy, String sortDir) {

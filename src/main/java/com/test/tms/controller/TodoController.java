@@ -1,9 +1,11 @@
 package com.test.tms.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.test.tms.constants.TodoBlockedFilter;
 import com.test.tms.constants.TodoPriority;
 import com.test.tms.constants.TodoStatus;
 import com.test.tms.entity.Todo;
+import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import com.test.tms.service.TodoService;
@@ -11,6 +13,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -44,10 +47,19 @@ public class TodoController {
             @RequestParam(required = false) TodoPriority priority,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dueFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dueTo,
+            @RequestParam(required = false) TodoBlockedFilter blockedFilter,
             @RequestParam(required = false, defaultValue = "due_date") String sortBy,
             @RequestParam(required = false, defaultValue = "asc") String sortDir
     ) {
-        return todoService.listTodos(pageNum, pageSize, status, priority, dueFrom, dueTo, sortBy, sortDir);
+        return todoService.listTodos(pageNum, pageSize, status, priority, dueFrom, dueTo, blockedFilter, sortBy, sortDir);
+    }
+
+    @PatchMapping(value = "/batch/status", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Void> batchUpdateStatus(
+            @Valid @NotNull @RequestBody TodoBatchStatusRequest request
+    ) {
+        todoService.batchUpdateTodoStatus(request);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}")

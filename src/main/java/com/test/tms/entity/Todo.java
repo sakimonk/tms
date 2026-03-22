@@ -1,9 +1,6 @@
 package com.test.tms.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import com.test.tms.constants.TodoPriority;
 import com.test.tms.constants.TodoStatus;
 import lombok.Data;
@@ -60,9 +57,23 @@ public class Todo {
     @TableField("recurrence_id")
     private Long recurrenceId;
 
-    /** 软删除标记：{@code true} 表示已删除（归档） */
+    /**
+     * 逻辑删除：{@code 0} 未删，{@code 1} 已删；由 MyBatis-Plus {@link TableLogic} 自动参与查询/删除语义。
+     */
+    @TableLogic(value = "0", delval = "1")
     @TableField("deleted")
-    private boolean deleted;
+    private Integer deleted;
+
+    /**
+     * 未完成且未软删的依赖目标个数；{@code 0} 表示非阻塞，与列表过滤 {@code TodoBlockedFilter} 一致。
+     */
+    @TableField("blocking_dep_count")
+    private int blockingDepCount;
+
+    /** 乐观锁版本，更新时由 MyBatis-Plus 自动比对并自增 */
+    @Version
+    @TableField("version")
+    private Integer version;
 
     /** 创建时间 */
     @TableField("created_at")

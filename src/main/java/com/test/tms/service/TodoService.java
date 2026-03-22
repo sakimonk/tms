@@ -2,9 +2,11 @@ package com.test.tms.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.test.tms.constants.TodoBlockedFilter;
 import com.test.tms.constants.TodoPriority;
 import com.test.tms.constants.TodoStatus;
 import com.test.tms.entity.Todo;
+import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import jakarta.validation.Valid;
@@ -26,6 +28,7 @@ public interface TodoService extends IService<Todo> {
             TodoPriority priority,
             LocalDateTime dueFrom,
             LocalDateTime dueTo,
+            TodoBlockedFilter blockedFilter,
             String sortBy,
             String sortDir
     );
@@ -33,4 +36,6 @@ public interface TodoService extends IService<Todo> {
     void updateTodo(@NotNull @Min(1) Long id, @NotNull @Valid TodoUpdateRequest request);
 
     void softDeleteTodo(@NotNull @Min(1) Long id, Long updatedBy);
+
+    void batchUpdateTodoStatus(@NotNull @Valid TodoBatchStatusRequest request);
 }

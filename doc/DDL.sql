@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS `tms_todo` (
 
   `deleted` TINYINT(1) NOT NULL DEFAULT 0,
 
+  `blocking_dep_count` INT NOT NULL DEFAULT 0 COMMENT '未完成且未软删的依赖目标个数，0=非阻塞',
+
+  `version` INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本',
+
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `created_by` BIGINT NULL,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -60,6 +64,7 @@ CREATE TABLE IF NOT EXISTS `tms_todo` (
   KEY `idx_tms_todo_status` (`status`),
   KEY `idx_tms_todo_priority` (`priority`),
   KEY `idx_tms_todo_deleted` (`deleted`),
+  KEY `idx_tms_todo_blocking_dep_count` (`blocking_dep_count`),
   KEY `idx_tms_todo_series` (`series_id`),
   KEY `idx_tms_todo_recurrence` (`recurrence_id`),
   KEY `idx_tms_todo_parent` (`parent_id`)
