@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 创建 TODO 的请求体。
@@ -62,4 +63,10 @@ public class TodoCreateRequest {
 
     /** 更新人 id（审计，可空） */
     private Long updatedBy;
+
+    /**
+     * 本任务依赖的前置 todo id 列表（须先完成）；可空或空列表表示无依赖。
+     * <p>依赖关系在 {@code TodoService#createTodo} 中写入 {@code tms_todo_dependency}。</p>
+     */
+    private List<Long> dependsOnTodoIds;
 }

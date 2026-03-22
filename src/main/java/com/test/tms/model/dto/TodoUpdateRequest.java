@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 更新 TODO 的请求体；未出现的字段表示不修改。
@@ -49,4 +50,10 @@ public class TodoUpdateRequest {
 
     /** 更新人 id（审计，可空） */
     private Long updatedBy;
+
+    /**
+     * 依赖的前置 todo id 全量列表；{@code null} 表示不修改依赖；空列表表示清空全部依赖。
+     * <p>依赖关系在 {@code TodoService#updateTodo} 中同步至 {@code tms_todo_dependency}。</p>
+     */
+    private List<Long> dependsOnTodoIds;
 }

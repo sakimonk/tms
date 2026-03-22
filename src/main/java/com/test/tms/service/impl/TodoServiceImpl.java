@@ -18,6 +18,7 @@ import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import com.test.tms.service.TodoBlockingDepCountHelper;
+import com.test.tms.service.TodoDependencyService;
 import com.test.tms.service.TodoService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -33,10 +34,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @Validated
@@ -45,6 +43,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     private TodoDependencyMapper todoDependencyMapper;
     private TodoRecurrenceMapper todoRecurrenceMapper;
     private TodoBlockingDepCountHelper blockingDepCountHelper;
+    private TodoDependencyService todoDependencyService;
 
     @Autowired
     public void setTodoDependencyMapper(TodoDependencyMapper todoDependencyMapper) {
@@ -59,6 +58,11 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     @Autowired
     public void setBlockingDepCountHelper(TodoBlockingDepCountHelper blockingDepCountHelper) {
         this.blockingDepCountHelper = blockingDepCountHelper;
+    }
+
+    @Autowired
+    public void setTodoDependencyService(TodoDependencyService todoDependencyService) {
+        this.todoDependencyService = todoDependencyService;
     }
 
     @Override
@@ -120,6 +124,12 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             todoRecurrenceMapper.updateById(recurrenceRow);
         }
 
+        List<Long> createDeps = dedupePositiveIds(request.getDependsOnTodoIds());
+        if (!createDeps.isEmpty()) {
+            replaceOutgoingDependencies(todo.getId(), todo.getUserId(), createDeps, by, now);
+            refreshBlockingDepCount(todo);
+        }
+
         if (TodoStatus.IN_PROGRESS.equals(todo.getStatus())) {
             validateDependenciesCompleted(todo.getId());
         }
@@ -172,7 +182,9 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         applyTodoListOrder(qw, sortBy, sortDir);
 
         Page<Todo> page = new Page<>(pageNum, pageSize);
-        return this.getBaseMapper().selectPage(page, qw);
+        IPage<Todo> result = this.getBaseMapper().selectPage(page, qw);
+        attachDependsOnTodoIds(result.getRecords());
+        return result;
     }
 
     @Override
@@ -211,6 +223,12 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         existing.setUpdatedAt(now);
         existing.setUpdatedBy(updatedBy);
 
+        if (request.getDependsOnTodoIds() != null) {
+            List<Long> updateDeps = dedupePositiveIds(request.getDependsOnTodoIds());
+            replaceOutgoingDependencies(existing.getId(), existing.getUserId(), updateDeps, updatedBy, now);
+            refreshBlockingDepCount(existing);
+        }
+
         if (statusWillChange) {
             TodoStatus newStatus = request.getStatus();
             boolean changed = !Objects.equals(oldStatus, newStatus);
@@ -232,7 +250,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     }
 
     /**
-     * 创建请求中的循环相关字段校验（替代原类级 Bean 校验）。
+     * 创建请求中的循环相关字段校验
      */
     private void validateRecurrenceForCreate(TodoCreateRequest request) {
         Integer interval = request.getRecurrenceInterval();
@@ -245,7 +263,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             }
         }
         RecurrenceType type = request.getRecurrenceType();
-        if (type != null && type == RecurrenceType.CUSTOM) {
+        if (type == RecurrenceType.CUSTOM) {
             String cron = request.getRecurrenceCron();
             if (cron == null || cron.isBlank()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "recurrenceCron is required when recurrenceType is CUSTOM");
@@ -367,7 +385,6 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         Todo prerequisiteBefore = snapshotBlockingFields(existing);
 
         existing.setDeleted(1);
-        existing.setStatus(TodoStatus.ARCHIVED);
         existing.setUpdatedAt(now);
         existing.setUpdatedBy(updatedBy);
 
@@ -395,6 +412,188 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             partial.setUpdatedBy(request.getUpdatedBy());
             updateTodo(id, partial);
         }
+    }
+
+    private List<Long> dedupePositiveIds(List<Long> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        return raw.stream()
+                .filter(Objects::nonNull)
+                .filter(id -> id >= 1L)
+                .distinct()
+                .toList();
+    }
+
+    private void refreshBlockingDepCount(Todo todo) {
+        if (todo == null || todo.getId() == null) {
+            return;
+        }
+        Todo row = this.getBaseMapper().selectById(todo.getId());
+        if (row != null) {
+            todo.setBlockingDepCount(row.getBlockingDepCount());
+        }
+    }
+
+    /**
+     * 将当前 todo 的依赖全量替换为 {@code newDependsOnIds}（经 {@link TodoDependencyService} 维护 {@link Todo#getBlockingDepCount()}）。
+     */
+    private void replaceOutgoingDependencies(
+            Long todoId,
+            Long userId,
+            List<Long> newDependsOnIds,
+            Long by,
+            LocalDateTime now
+    ) {
+        for (Long d : newDependsOnIds) {
+            if (d.equals(todoId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Todo cannot depend on itself");
+            }
+        }
+        validateDependsOnTargetsForUser(userId, newDependsOnIds);
+        assertNoDependencyCycle(todoId, newDependsOnIds);
+
+        LambdaQueryWrapper<TodoDependency> qw = new LambdaQueryWrapper<>();
+        qw.eq(TodoDependency::getTodoId, todoId);
+        List<TodoDependency> existing = todoDependencyMapper.selectList(qw);
+        if (existing != null) {
+            for (TodoDependency dep : existing) {
+                if (dep.getId() != null) {
+                    todoDependencyService.removeById(dep.getId());
+                }
+            }
+        }
+        for (Long dependsOnId : newDependsOnIds) {
+            TodoDependency row = new TodoDependency();
+            row.setTodoId(todoId);
+            row.setDependsOnId(dependsOnId);
+            row.setCreatedAt(now);
+            row.setUpdatedAt(now);
+            row.setCreatedBy(by);
+            row.setUpdatedBy(by);
+            boolean ok = todoDependencyService.save(row);
+            if (!ok) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save todo dependency");
+            }
+        }
+    }
+
+    private void validateDependsOnTargetsForUser(Long userId, List<Long> dependsOnIds) {
+        if (dependsOnIds.isEmpty()) {
+            return;
+        }
+        for (Long id : dependsOnIds) {
+            Todo t = this.getBaseMapper().selectById(id);
+            if (t == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dependsOn todo not found: " + id);
+            }
+//            if (!Objects.equals(t.getUserId(), userId)) {
+//                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dependsOn todo must belong to the same user");
+//            }
+        }
+    }
+
+    /**
+     * 若将 {@code todoId} 的依赖置为 {@code newDependsOnIds} 会形成环，则抛错。
+     * 遍历时对 {@code todoId} 使用新列表，对其余节点使用库中当前出边。
+     */
+    private void assertNoDependencyCycle(Long todoId, List<Long> newDependsOnIds) {
+        for (Long d : newDependsOnIds) {
+            if (reachableAlongPrerequisites(d, todoId, todoId, newDependsOnIds, new HashSet<>())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Todo dependency graph would contain a cycle");
+            }
+        }
+    }
+
+    /**
+     * 沿「当前节点依赖的前置任务」方向前进，判断是否能到达 {@code target}。
+     */
+    private boolean reachableAlongPrerequisites(
+            Long current,
+            Long target,
+            Long editingTodoId,
+            List<Long> newDepsForEditing,
+            Set<Long> visited
+    ) {
+        if (current.equals(target)) {
+            return true;
+        }
+        if (!visited.add(current)) {
+            return false;
+        }
+        List<Long> next;
+        if (current.equals(editingTodoId)) {
+            next = newDepsForEditing;
+        } else {
+            next = listDependsOnIdsFromDb(current);
+        }
+        for (Long x : next) {
+            if (reachableAlongPrerequisites(x, target, editingTodoId, newDepsForEditing, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<Long> listDependsOnIdsFromDb(Long forTodoId) {
+        LambdaQueryWrapper<TodoDependency> depQw = new LambdaQueryWrapper<>();
+        depQw.eq(TodoDependency::getTodoId, forTodoId);
+        depQw.orderByAsc(TodoDependency::getId);
+        List<TodoDependency> list = todoDependencyMapper.selectList(depQw);
+        if (list == null || list.isEmpty()) {
+            return List.of();
+        }
+        return list.stream()
+                .map(TodoDependency::getDependsOnId)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private void attachDependsOnTodoIds(Todo todo) {
+        if (todo == null || todo.getId() == null) {
+            return;
+        }
+        todo.setDependsOnTodoIds(listDependsOnIdsFromDb(todo.getId()));
+    }
+
+    private void attachDependsOnTodoIds(List<Todo> todos) {
+        if (todos == null || todos.isEmpty()) {
+            return;
+        }
+        List<Long> ids = todos.stream()
+                .map(Todo::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, List<Long>> grouped = loadDependsOnIdsGrouped(ids);
+        for (Todo t : todos) {
+            if (t.getId() == null) {
+                continue;
+            }
+            t.setDependsOnTodoIds(grouped.getOrDefault(t.getId(), List.of()));
+        }
+    }
+
+    private Map<Long, List<Long>> loadDependsOnIdsGrouped(List<Long> todoIds) {
+        if (todoIds == null || todoIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<TodoDependency> depQw = new LambdaQueryWrapper<>();
+        depQw.in(TodoDependency::getTodoId, todoIds);
+        depQw.orderByAsc(TodoDependency::getId);
+        List<TodoDependency> list = todoDependencyMapper.selectList(depQw);
+        if (list == null || list.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<Long>> map = new LinkedHashMap<>();
+        for (TodoDependency d : list) {
+            Long tid = d.getTodoId();
+            Long depId = d.getDependsOnId();
+            if (tid == null || depId == null) {
+                continue;
+            }
+            map.computeIfAbsent(tid, k -> new ArrayList<>()).add(depId);
+        }
+        return map;
     }
 
     private void requireRowUpdated(boolean updated, String message) {
@@ -481,9 +680,8 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             nd.setUpdatedAt(now);
             nd.setCreatedBy(by);
             nd.setUpdatedBy(by);
-            todoDependencyMapper.insert(nd);
+            todoDependencyService.save(nd);
         }
-        blockingDepCountHelper.recalculateBlockingDepCount(toTodoId);
     }
 
     private LocalDateTime computeNextDueDate(TodoRecurrence rule, LocalDateTime dueDate) {

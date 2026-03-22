@@ -6,6 +6,7 @@ import com.test.tms.constants.TodoStatus;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * TODO 实例，对应表 {@code tms_todo}。
@@ -90,4 +91,10 @@ public class Todo {
     /** 最后更新人用户 id（可空） */
     @TableField("updated_by")
     private Long updatedBy;
+
+    /**
+     * 本任务依赖的前置 todo id 列表（读接口填充；非表字段）。
+     */
+    @TableField(exist = false)
+    private List<Long> dependsOnTodoIds;
 }

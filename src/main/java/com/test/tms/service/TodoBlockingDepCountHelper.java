@@ -35,7 +35,8 @@ public class TodoBlockingDepCountHelper {
         }
         Integer del = prerequisite.getDeleted();
         boolean notDeleted = del == null || del == 0;
-        return notDeleted && prerequisite.getStatus() != TodoStatus.COMPLETED;
+        return notDeleted &&
+                (prerequisite.getStatus() != TodoStatus.COMPLETED && prerequisite.getStatus() != TodoStatus.ARCHIVED);
     }
 
     /**
