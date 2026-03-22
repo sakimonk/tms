@@ -1,0 +1,239 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.45;
+  margin: 0;
+  padding: 1rem 1.25rem 2rem;
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+  color: #1a1a1a;
+  background: #f5f5f5;
+}
+
+.header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.35rem;
+}
+
+.muted {
+  color: #555;
+  font-size: 0.9rem;
+  margin: 0.25rem 0 0;
+}
+
+code {
+  background: #e8e8e8;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+label {
+  display: block;
+  font-size: 0.88rem;
+  margin-bottom: 0.35rem;
+}
+
+input[type='text'],
+input[type='number'],
+input[type='datetime-local'],
+select,
+textarea {
+  width: 100%;
+  max-width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.grid-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.grid-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.65rem;
+}
+
+.form-create label {
+  margin-bottom: 0.5rem;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.inline input {
+  width: auto;
+}
+
+.recurrence-box {
+  border: 1px dashed #ccc;
+  padding: 0.75rem;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+}
+
+.hidden {
+  display: none !important;
+}
+
+button {
+  font: inherit;
+  padding: 0.45rem 0.85rem;
+  border-radius: 4px;
+  border: 1px solid #333;
+  background: #333;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #000;
+}
+
+button.secondary {
+  background: #fff;
+  color: #333;
+}
+
+button.secondary:hover {
+  background: #eee;
+}
+
+button.danger {
+  border-color: #a33;
+  background: #c44;
+}
+
+button.danger:hover {
+  background: #a22;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.data-table th,
+.data-table td {
+  border: 1px solid #ddd;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  background: #eee;
+}
+
+.data-table .deps {
+  max-width: 140px;
+  word-break: break-all;
+}
+
+.data-table .actions {
+  white-space: nowrap;
+}
+
+.data-table .actions button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 520px;
+  width: 100%;
+  border: 1px solid #ccc;
+}
+
+.modal-content h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.toast {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  max-width: 360px;
+  padding: 0.65rem 0.9rem;
+  background: #222;
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.toast.error {
+  background: #8b2222;
+}

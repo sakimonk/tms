@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TMS — TODO 管理</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>TODO 管理</h1>
+    <p class="muted">简易界面 · 直连后端 <code>/todos</code></p>
+  </header>
+
+  <section class="panel" aria-label="当前用户">
+    <label>用户 ID（创建/审计用，会记住到本地）</label>
+    <div class="row">
+      <input type="number" id="userId" min="1" step="1" placeholder="例如 1" />
+      <button type="button" id="btnSaveUser">保存</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="筛选与排序">
+    <div class="grid-filters">
+      <label>状态
+        <select id="filterStatus">
+          <option value="">全部</option>
+          <option value="NOT_STARTED">NOT_STARTED</option>
+          <option value="IN_PROGRESS">IN_PROGRESS</option>
+          <option value="COMPLETED">COMPLETED</option>
+          <option value="ARCHIVED">ARCHIVED</option>
+        </select>
+      </label>
+      <label>优先级
+        <select id="filterPriority">
+          <option value="">全部</option>
+          <option value="LOW">LOW</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="HIGH">HIGH</option>
+        </select>
+      </label>
+      <label>阻塞筛选
+        <select id="filterBlocked">
+          <option value="">全部</option>
+          <option value="BLOCKED">BLOCKED（被依赖阻塞）</option>
+          <option value="UNBLOCKED">UNBLOCKED</option>
+        </select>
+      </label>
+      <label>排序字段
+        <select id="sortBy">
+          <option value="due_date">due_date</option>
+          <option value="priority">priority</option>
+          <option value="status">status</option>
+          <option value="name">name</option>
+        </select>
+      </label>
+      <label>顺序
+        <select id="sortDir">
+          <option value="asc">asc</option>
+          <option value="desc">desc</option>
+        </select>
+      </label>
+      <label>每页条数
+        <select id="pageSize">
+          <option value="10">10</option>
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <button type="button" id="btnApplyFilter">应用筛选</button>
+      <button type="button" id="btnRefresh" class="secondary">刷新列表</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="新建 TODO">
+    <h2>新建</h2>
+    <form id="formCreate" class="form-create">
+      <div class="grid-form">
+        <label>标题 *
+          <input name="name" required maxlength="200" />
+        </label>
+        <label>截止时间 *（本地时间）
+          <input name="dueDate" type="datetime-local" required />
+        </label>
+        <label>状态 *
+          <select name="status" required>
+            <option value="NOT_STARTED">NOT_STARTED</option>
+            <option value="IN_PROGRESS">IN_PROGRESS</option>
+            <option value="COMPLETED">COMPLETED</option>
+            <option value="ARCHIVED">ARCHIVED</option>
+          </select>
+        </label>
+        <label>优先级 *
+          <select name="priority" required>
+            <option value="LOW">LOW</option>
+            <option value="MEDIUM" selected>MEDIUM</option>
+            <option value="HIGH">HIGH</option>
+          </select>
+        </label>
+      </div>
+      <label>描述
+        <textarea name="description" rows="2"></textarea>
+      </label>
+      <label class="inline">
+        <input name="isRecurring" type="checkbox" id="createIsRecurring" />
+        循环任务
+      </label>
+      <div id="createRecurrence" class="recurrence-box hidden">
+        <label>循环类型 *
+          <select name="recurrenceType">
+            <option value="DAILY">DAILY</option>
+            <option value="WEEKLY">WEEKLY</option>
+            <option value="MONTHLY">MONTHLY</option>
+            <option value="CUSTOM">CUSTOM</option>
+          </select>
+        </label>
+        <label>间隔（≥1）
+          <input name="recurrenceInterval" type="number" min="1" value="1" />
+        </label>
+        <label>Cron（仅 CUSTOM 必填）
+          <input name="recurrenceCron" type="text" placeholder="0 0 9 * * ?" maxlength="100" />
+        </label>
+      </div>
+      <label>依赖的前置 TODO id（逗号分隔，可空）
+        <input name="dependsOnTodoIds" type="text" placeholder="例如：1, 2" />
+      </label>
+      <button type="submit">创建</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>列表</h2>
+    <p id="listMeta" class="muted"></p>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>标题</th>
+            <th>截止时间</th>
+            <th>状态</th>
+            <th>优先级</th>
+            <th>阻塞数</th>
+            <th>依赖</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="todoTbody"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <button type="button" id="btnPrev">上一页</button>
+      <span id="pageInfo"></span>
+      <button type="button" id="btnNext">下一页</button>
+    </div>
+  </section>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-content">
+      <h2 id="modalTitle">编辑 TODO</h2>
+      <form id="formEdit">
+        <input type="hidden" name="id" id="editTodoId" />
+        <div class="grid-form">
+          <label>标题
+            <input name="name" maxlength="200" />
+          </label>
+          <label>截止时间
+            <input name="dueDate" type="datetime-local" />
+          </label>
+          <label>状态
+            <select name="status">
+              <option value="NOT_STARTED">NOT_STARTED</option>
+              <option value="IN_PROGRESS">IN_PROGRESS</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="ARCHIVED">ARCHIVED</option>
+            </select>
+          </label>
+          <label>优先级
+            <select name="priority">
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+            </select>
+          </label>
+        </div>
+        <label>描述
+          <textarea name="description" rows="3" maxlength="2000"></textarea>
+        </label>
+        <p id="editRecurrenceHint" class="muted hidden"></p>
+        <label>依赖的前置 TODO id（逗号分隔；留空并保存表示清空依赖）</label>
+        <input name="dependsOnTodoIds" type="text" placeholder="例如：1, 2 或留空清空" />
+        <div class="modal-actions">
+          <button type="submit">保存</button>
+          <button type="button" id="btnCancelEdit" class="secondary">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
