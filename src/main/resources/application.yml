@@ -16,4 +16,6 @@ mybatis-plus:
   configuration:
     # 枚举字段使用 @EnumValue 标记的存库值（与 VARCHAR 列互转）
     default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
+    # 调试：控制台打印 MyBatis 执行的 SQL 及参数（上线建议删除本行或改用 spring profile）
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 

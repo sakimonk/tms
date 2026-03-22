@@ -16,6 +16,7 @@ import com.test.tms.mapper.TodoMapper;
 import com.test.tms.mapper.TodoRecurrenceMapper;
 import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
+import com.test.tms.model.dto.TodoResponse;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import com.test.tms.service.TodoBlockingDepCountHelper;
 import com.test.tms.service.TodoDependencyService;
@@ -23,7 +24,7 @@ import com.test.tms.service.TodoService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -38,36 +39,17 @@ import java.util.*;
 
 @Service
 @Validated
+@RequiredArgsConstructor
 public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements TodoService {
 
-    private TodoDependencyMapper todoDependencyMapper;
-    private TodoRecurrenceMapper todoRecurrenceMapper;
-    private TodoBlockingDepCountHelper blockingDepCountHelper;
-    private TodoDependencyService todoDependencyService;
-
-    @Autowired
-    public void setTodoDependencyMapper(TodoDependencyMapper todoDependencyMapper) {
-        this.todoDependencyMapper = todoDependencyMapper;
-    }
-
-    @Autowired
-    public void setTodoRecurrenceMapper(TodoRecurrenceMapper todoRecurrenceMapper) {
-        this.todoRecurrenceMapper = todoRecurrenceMapper;
-    }
-
-    @Autowired
-    public void setBlockingDepCountHelper(TodoBlockingDepCountHelper blockingDepCountHelper) {
-        this.blockingDepCountHelper = blockingDepCountHelper;
-    }
-
-    @Autowired
-    public void setTodoDependencyService(TodoDependencyService todoDependencyService) {
-        this.todoDependencyService = todoDependencyService;
-    }
+    private final TodoDependencyMapper todoDependencyMapper;
+    private final TodoRecurrenceMapper todoRecurrenceMapper;
+    private final TodoBlockingDepCountHelper blockingDepCountHelper;
+    private final TodoDependencyService todoDependencyService;
 
     @Override
     @Transactional
-    public Todo createTodo(
+    public TodoResponse createTodo(
             @NotNull @Valid TodoCreateRequest request
     ) {
         validateRecurrenceForCreate(request);
@@ -87,6 +69,7 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
             recurrenceRow.setUpdatedAt(now);
             recurrenceRow.setCreatedBy(by);
             recurrenceRow.setUpdatedBy(by);
+            recurrenceRow.setDeleted(0);
             int ins = todoRecurrenceMapper.insert(recurrenceRow);
             if (ins <= 0 || recurrenceRow.getId() == null) {
                 throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create recurrence rule");
@@ -136,22 +119,19 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         if (TodoStatus.COMPLETED.equals(todo.getStatus()) && todo.getRecurrenceId() != null) {
             createNextOccurrence(todo, by);
         }
-        return todo;
+        attachDependsOnTodoIds(todo);
+        return TodoResponse.fromEntity(todo);
     }
 
     @Override
-    public Todo getTodo(
+    public TodoResponse getTodo(
             @NotNull @Min(1) Long id
     ) {
-        Todo todo = this.getBaseMapper().selectById(id);
-        if (todo == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
-        }
-        return todo;
+        return TodoResponse.fromEntity(loadTodoWithDependencies(id));
     }
 
     @Override
-    public IPage<Todo> listTodos(
+    public IPage<TodoResponse> listTodos(
             @Min(1) long pageNum,
             @Min(1) long pageSize,
             TodoStatus status,
@@ -184,7 +164,24 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         Page<Todo> page = new Page<>(pageNum, pageSize);
         IPage<Todo> result = this.getBaseMapper().selectPage(page, qw);
         attachDependsOnTodoIds(result.getRecords());
-        return result;
+        return result.convert(TodoResponse::fromEntity);
+    }
+
+    private Todo loadTodoWithDependencies(@NotNull @Min(1) Long id) {
+        Todo todo = this.getBaseMapper().selectById(id);
+        if (todo == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
+        }
+        attachDependsOnTodoIds(todo);
+        return todo;
+    }
+
+    private Todo requireTodoEntity(@NotNull @Min(1) Long id) {
+        Todo todo = this.getBaseMapper().selectById(id);
+        if (todo == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Todo not found");
+        }
+        return todo;
     }
 
     @Override
@@ -377,20 +374,42 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
     @Transactional
     public void softDeleteTodo(
             @NotNull @Min(1) Long id,
-            Long updatedBy
+            Long updatedBy,
+            boolean deleteAssociated
     ) {
-        Todo existing = getTodo(id);
+        Todo existing = requireTodoEntity(id);
         LocalDateTime now = LocalDateTime.now();
 
         Todo prerequisiteBefore = snapshotBlockingFields(existing);
 
-        existing.setDeleted(1);
-        existing.setUpdatedAt(now);
-        existing.setUpdatedBy(updatedBy);
-
         blockingDepCountHelper.onPrerequisiteSnapshotAndNow(prerequisiteBefore, existing);
 
-        requireRowUpdated(this.updateById(existing), "Todo was modified by another request");
+        requireRowUpdated(this.removeById(existing), "Todo was modified by another request");
+
+        if (deleteAssociated) {
+            softDeleteRecurrenceIfNoActiveTodos(existing.getRecurrenceId(), updatedBy, now);
+        }
+    }
+
+    /**
+     * 当指定 {@code recurrenceId} 下已无任何未删除的 {@link Todo} 时，软删除对应循环规则。
+     * <p>多条实例共享同一规则时，仅删除最后一条实例后才删除规则。</p>
+     */
+    private void softDeleteRecurrenceIfNoActiveTodos(Long recurrenceId, Long updatedBy, LocalDateTime now) {
+        if (recurrenceId == null) {
+            return;
+        }
+        LambdaQueryWrapper<Todo> qw = new LambdaQueryWrapper<>();
+        qw.eq(Todo::getRecurrenceId, recurrenceId);
+        long activeTodos = this.count(qw);
+        if (activeTodos > 0) {
+            return;
+        }
+        TodoRecurrence rule = todoRecurrenceMapper.selectById(recurrenceId);
+        if (rule == null) {
+            return;
+        }
+        requireRowUpdated(todoRecurrenceMapper.deleteById(rule) > 0, "Failed to soft delete recurrence rule");
     }
 
     @Override

@@ -1,9 +1,6 @@
 package com.test.tms.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import com.test.tms.constants.RecurrenceType;
 import lombok.Data;
 
@@ -48,4 +45,11 @@ public class TodoRecurrence {
 
     @TableField("updated_by")
     private Long updatedBy;
+
+    /**
+     * 逻辑删除：{@code 0} 未删，{@code 1} 已删。
+     */
+    @TableLogic(value = "0", delval = "1")
+    @TableField("deleted")
+    private Integer deleted;
 }

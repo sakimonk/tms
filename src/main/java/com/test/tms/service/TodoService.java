@@ -8,6 +8,7 @@ import com.test.tms.constants.TodoStatus;
 import com.test.tms.entity.Todo;
 import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
+import com.test.tms.model.dto.TodoResponse;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -17,11 +18,11 @@ import java.time.LocalDateTime;
 
 public interface TodoService extends IService<Todo> {
 
-    Todo createTodo(@NotNull @Valid TodoCreateRequest request);
+    TodoResponse createTodo(@NotNull @Valid TodoCreateRequest request);
 
-    Todo getTodo(@NotNull @Min(1) Long id);
+    TodoResponse getTodo(@NotNull @Min(1) Long id);
 
-    IPage<Todo> listTodos(
+    IPage<TodoResponse> listTodos(
             @Min(1) long pageNum,
             @Min(1) long pageSize,
             TodoStatus status,
@@ -35,7 +36,13 @@ public interface TodoService extends IService<Todo> {
 
     void updateTodo(@NotNull @Min(1) Long id, @NotNull @Valid TodoUpdateRequest request);
 
-    void softDeleteTodo(@NotNull @Min(1) Long id, Long updatedBy);
+    /**
+     * 软删除 TODO。
+     *
+     * @param deleteAssociated 为 {@code true} 时沿用完整逻辑：无剩余未删实例时同步软删 {@code TodoRecurrence}；
+     *                         为 {@code false} 时仅软删当前实例，不处理关联循环规则。
+     */
+    void softDeleteTodo(@NotNull @Min(1) Long id, Long updatedBy, boolean deleteAssociated);
 
     void batchUpdateTodoStatus(@NotNull @Valid TodoBatchStatusRequest request);
 }

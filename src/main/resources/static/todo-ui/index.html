@@ -189,13 +189,34 @@
           <textarea name="description" rows="3" maxlength="2000"></textarea>
         </label>
         <p id="editRecurrenceHint" class="muted hidden"></p>
-        <label>依赖的前置 TODO id（逗号分隔；留空并保存表示清空依赖）</label>
-        <input name="dependsOnTodoIds" type="text" placeholder="例如：1, 2 或留空清空" />
+        <label for="editDependsOnTodoIds">依赖的前置 TODO id（逗号分隔；留空并保存表示清空依赖）</label>
+        <input
+          id="editDependsOnTodoIds"
+          name="dependsOnTodoIds"
+          type="text"
+          autocomplete="off"
+          placeholder="例如：1, 2 或留空清空"
+        />
         <div class="modal-actions">
           <button type="submit">保存</button>
           <button type="button" id="btnCancelEdit" class="secondary">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="deleteModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal-content modal-sm">
+      <h2 id="deleteModalTitle">确认删除</h2>
+      <p class="muted">将软删除 TODO #<span id="deleteModalTodoId"></span></p>
+      <label class="inline delete-modal-check">
+        <input type="checkbox" id="deleteAssociated" checked />
+        删除时同步关联（无剩余实例时软删循环规则）
+      </label>
+      <div class="modal-actions">
+        <button type="button" id="btnConfirmDelete" class="danger">确认删除</button>
+        <button type="button" id="btnCancelDelete" class="secondary">取消</button>
+      </div>
     </div>
   </div>
 

@@ -33,8 +33,14 @@ CREATE TABLE IF NOT EXISTS `tms_todo_recurrence` (
   `created_by` BIGINT NULL,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `updated_by` BIGINT NULL,
-  PRIMARY KEY (`id`)
+  `deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0=未删 1=软删',
+  PRIMARY KEY (`id`),
+  KEY `idx_tms_todo_recurrence_deleted` (`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 若 `tms_todo_recurrence` 已存在且无 deleted 列，可执行：
+-- ALTER TABLE `tms_todo_recurrence` ADD COLUMN `deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0=未删 1=软删' AFTER `updated_by`;
+-- ALTER TABLE `tms_todo_recurrence` ADD KEY `idx_tms_todo_recurrence_deleted` (`deleted`);
 
 CREATE TABLE IF NOT EXISTS `tms_todo` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,

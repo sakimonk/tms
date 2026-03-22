@@ -220,19 +220,45 @@
     return String(v).replace('T', ' ');
   }
 
-  async function deleteTodo(id) {
-    if (!confirm('确认删除 TODO #' + id + '？（软删除）')) {
+  var pendingDeleteId = null;
+
+  function openDeleteModal(id) {
+    pendingDeleteId = id;
+    $('deleteModalTodoId').textContent = String(id);
+    $('deleteAssociated').checked = true;
+    $('deleteModal').classList.remove('hidden');
+  }
+
+  function closeDeleteModal() {
+    pendingDeleteId = null;
+    $('deleteModal').classList.add('hidden');
+  }
+
+  async function confirmDeleteFromModal() {
+    if (pendingDeleteId == null) {
       return;
     }
+    var id = pendingDeleteId;
+    var da = $('deleteAssociated').checked;
     try {
       var uid = getUserId();
-      var q = uid != null ? '?updatedBy=' + encodeURIComponent(uid) : '';
-      await apiFetch(API + '/' + id + q, { method: 'DELETE' });
+      var params = new URLSearchParams();
+      params.set('deleteAssociated', da ? 'true' : 'false');
+      if (uid != null) {
+        params.set('updatedBy', String(uid));
+      }
+      var q = params.toString();
+      await apiFetch(API + '/' + id + (q ? '?' + q : ''), { method: 'DELETE' });
+      closeDeleteModal();
       toast('已删除');
       await loadTodos();
     } catch (e) {
       toast(e.message || String(e), true);
     }
+  }
+
+  function deleteTodo(id) {
+    openDeleteModal(id);
   }
 
   function readFiltersFromDom() {
@@ -318,8 +344,11 @@
       f.status.value = row.status || 'NOT_STARTED';
       f.priority.value = row.priority || 'MEDIUM';
       var deps = row.dependsOnTodoIds;
-      f.dependsOnTodoIds.value =
-        Array.isArray(deps) && deps.length ? deps.join(', ') : '';
+      var depInput = $('editDependsOnTodoIds');
+      if (depInput) {
+        depInput.value =
+          Array.isArray(deps) && deps.length ? deps.join(', ') : '';
+      }
 
       var hint = $('editRecurrenceHint');
       if (row.recurrenceId != null) {
@@ -348,13 +377,15 @@
     var uid = getUserId();
     var f = ev.target;
     var id = $('editTodoId').value;
+    var depEl = $('editDependsOnTodoIds');
+    var depVal = depEl ? depEl.value : '';
     var body = {
       name: f.name.value,
       description: f.description.value || null,
       dueDate: fromDatetimeLocal(f.dueDate.value),
       status: f.status.value,
       priority: f.priority.value,
-      dependsOnTodoIds: parseDependsOnTodoIds(f.dependsOnTodoIds.value),
+      dependsOnTodoIds: parseDependsOnTodoIds(depVal),
     };
     if (uid != null) {
       body.updatedBy = uid;
@@ -426,6 +457,17 @@
       if (ev.target === $('modal')) {
         closeEdit();
       }
+    };
+    $('deleteModal').onclick = function (ev) {
+      if (ev.target === $('deleteModal')) {
+        closeDeleteModal();
+      }
+    };
+    $('btnConfirmDelete').onclick = function () {
+      confirmDeleteFromModal();
+    };
+    $('btnCancelDelete').onclick = function () {
+      closeDeleteModal();
     };
   }
 

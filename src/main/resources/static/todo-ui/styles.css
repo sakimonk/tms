@@ -98,6 +98,14 @@ textarea {
   margin: 0.5rem 0;
 }
 
+.modal-sm {
+  max-width: 400px;
+}
+
+.delete-modal-check {
+  margin: 0.75rem 0 1rem;
+}
+
 .inline input {
   width: auto;
 }

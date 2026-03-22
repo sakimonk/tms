@@ -4,14 +4,15 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.test.tms.constants.TodoBlockedFilter;
 import com.test.tms.constants.TodoPriority;
 import com.test.tms.constants.TodoStatus;
-import com.test.tms.entity.Todo;
 import com.test.tms.model.dto.TodoBatchStatusRequest;
 import com.test.tms.model.dto.TodoCreateRequest;
+import com.test.tms.model.dto.TodoResponse;
 import com.test.tms.model.dto.TodoUpdateRequest;
 import com.test.tms.service.TodoService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -21,26 +22,23 @@ import java.time.LocalDateTime;
 
 @RestController
 @RequestMapping("/todos")
+@RequiredArgsConstructor
 public class TodoController {
 
     private final TodoService todoService;
 
-    public TodoController(TodoService todoService) {
-        this.todoService = todoService;
-    }
-
     @PostMapping
-    public Todo create(@Valid @NotNull @RequestBody TodoCreateRequest request) {
+    public TodoResponse create(@Valid @NotNull @RequestBody TodoCreateRequest request) {
         return todoService.createTodo(request);
     }
 
     @GetMapping("/{id}")
-    public Todo getById(@PathVariable("id") @NotNull @Min(1) Long id) {
+    public TodoResponse getById(@PathVariable("id") @NotNull @Min(1) Long id) {
         return todoService.getTodo(id);
     }
 
     @GetMapping
-    public IPage<Todo> list(
+    public IPage<TodoResponse> list(
             @RequestParam(defaultValue = "1") @Min(1) long pageNum,
             @RequestParam(defaultValue = "20") @Min(1) long pageSize,
             @RequestParam(required = false) TodoStatus status,
@@ -74,9 +72,10 @@ public class TodoController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @PathVariable("id") @NotNull @Min(1) Long id,
-            @RequestParam(required = false) Long updatedBy
+            @RequestParam(required = false) Long updatedBy,
+            @RequestParam(defaultValue = "true") boolean deleteAssociated
     ) {
-        todoService.softDeleteTodo(id, updatedBy);
+        todoService.softDeleteTodo(id, updatedBy, deleteAssociated);
         return ResponseEntity.noContent().build();
     }
 }
