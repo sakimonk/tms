@@ -5,29 +5,6 @@
 # 首次启动 MySQL 会执行 ../../doc/DDL.sql 初始化表结构（需已存在库名 tms）
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: tms-mysql
-    environment:
-      MYSQL_DATABASE: tms
-      MYSQL_USER: tms
-      MYSQL_PASSWORD: tms_local
-      MYSQL_ROOT_PASSWORD: root_local
-    ports:
-      - "3307:3306"
-    volumes:
-      - tms_mysql_data:/var/lib/mysql
-      - ../../doc/DDL.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
   app:
     build:
       context: ../..
