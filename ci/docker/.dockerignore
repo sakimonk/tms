@@ -1,0 +1,24 @@
+# Git / IDE
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+*.iml
+
+# 构建产物与缓存
+**/target
+.mvn/wrapper/maven-wrapper.jar
+
+# CI 与文档（不参与 Maven 构建）
+ci
+doc
+*.md
+HELP.md
+mvnw
+mvnw.cmd
+
+# 其他
+**/.DS_Store
+**/Thumbs.db
+**/*.log

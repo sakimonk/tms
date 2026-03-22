@@ -1,0 +1,57 @@
+# 本地一键起栈：在仓库根目录执行
+#   docker compose -f ci/docker/docker-compose.yml up --build
+# 或在本目录执行
+#   docker compose -f docker-compose.yml up --build
+# 首次启动 MySQL 会执行 ../../doc/DDL.sql 初始化表结构（需已存在库名 tms）
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: tms-mysql
+    environment:
+      MYSQL_DATABASE: tms
+      MYSQL_USER: tms
+      MYSQL_PASSWORD: tms_local
+      MYSQL_ROOT_PASSWORD: root_local
+    ports:
+      - "3307:3306"
+    volumes:
+      - tms_mysql_data:/var/lib/mysql
+      - ../../doc/DDL.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  app:
+    build:
+      context: ../..
+      dockerfile: ci/docker/Dockerfile
+    image: tms:local
+    container_name: tms-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/tms?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: tms
+      SPRING_DATASOURCE_PASSWORD: tms_local
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      # 关闭 MyBatis SQL 打印到 stdout（生产镜像更干净）
+      MYBATIS_PLUS_CONFIGURATION_LOG_IMPL: org.apache.ibatis.logging.slf4j.Slf4jImpl
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/v3/api-docs || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  tms_mysql_data:
