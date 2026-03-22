@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS `tms_user` (
 
 CREATE TABLE IF NOT EXISTS `tms_todo_recurrence` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
-  `recurrence_type` VARCHAR(20) NOT NULL,
+  `recurrence_type` ENUM('DAILY','WEEKLY','MONTHLY','CUSTOM') NOT NULL COMMENT '与 RecurrenceType 枚举一致',
   `recurrence_interval` INT NOT NULL DEFAULT 1,
   `recurrence_cron` VARCHAR(100) NULL,
   `root_todo_id` BIGINT NULL,
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS `tms_todo` (
   `name` VARCHAR(200) NOT NULL,
   `description` TEXT NULL,
   `due_date` DATETIME NOT NULL,
-  `status` VARCHAR(20) NOT NULL,
-  `priority` VARCHAR(10) NOT NULL,
+  `status` ENUM('NOT_STARTED','IN_PROGRESS','COMPLETED','ARCHIVED') NOT NULL COMMENT '与 TodoStatus 枚举一致',
+  `priority` ENUM('LOW','MEDIUM','HIGH') NOT NULL COMMENT '与 TodoPriority 枚举一致',
 
   `series_id` VARCHAR(36) NULL,
   `parent_id` BIGINT NULL,
@@ -90,3 +90,4 @@ CREATE TABLE IF NOT EXISTS `tms_todo_dependency` (
   KEY `idx_tms_todo_dependency_depends_on_id` (`depends_on_id`),
   CHECK (`todo_id` <> `depends_on_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

@@ -106,6 +106,32 @@ textarea {
   margin: 0.75rem 0 1rem;
 }
 
+.batch-bar {
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 0.75rem;
+}
+
+.batch-inline {
+  margin: 0;
+}
+
+.batch-inline select {
+  width: auto;
+  min-width: 10rem;
+}
+
+.data-table .col-cb {
+  width: 2.25rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.data-table .col-cb input {
+  margin: 0;
+}
+
 .inline input {
   width: auto;
 }

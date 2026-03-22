@@ -380,14 +380,39 @@ public class TodoServiceImpl extends ServiceImpl<TodoMapper, Todo> implements To
         Todo existing = requireTodoEntity(id);
         LocalDateTime now = LocalDateTime.now();
 
-        Todo prerequisiteBefore = snapshotBlockingFields(existing);
-
-        blockingDepCountHelper.onPrerequisiteSnapshotAndNow(prerequisiteBefore, existing);
+        removeAllDependencyEdgesForTodo(id);
 
         requireRowUpdated(this.removeById(existing), "Todo was modified by another request");
 
         if (deleteAssociated) {
             softDeleteRecurrenceIfNoActiveTodos(existing.getRecurrenceId(), updatedBy, now);
+        }
+    }
+
+    /**
+     * 物理删除 {@code tms_todo_dependency} 中所有与指定 todo 相关的边（出边与入边），
+     * 经 {@link TodoDependencyService#removeById} 以维护下游 {@link Todo#getBlockingDepCount()}。
+     */
+    private void removeAllDependencyEdgesForTodo(Long todoId) {
+        LambdaQueryWrapper<TodoDependency> outQw = new LambdaQueryWrapper<>();
+        outQw.eq(TodoDependency::getTodoId, todoId);
+        List<TodoDependency> outgoing = todoDependencyMapper.selectList(outQw);
+        if (outgoing != null) {
+            for (TodoDependency d : outgoing) {
+                if (d.getId() != null) {
+                    todoDependencyService.removeById(d.getId());
+                }
+            }
+        }
+        LambdaQueryWrapper<TodoDependency> inQw = new LambdaQueryWrapper<>();
+        inQw.eq(TodoDependency::getDependsOnId, todoId);
+        List<TodoDependency> incoming = todoDependencyMapper.selectList(inQw);
+        if (incoming != null) {
+            for (TodoDependency d : incoming) {
+                if (d.getId() != null) {
+                    todoDependencyService.removeById(d.getId());
+                }
+            }
         }
     }
 

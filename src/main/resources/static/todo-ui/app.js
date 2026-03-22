@@ -12,6 +12,8 @@
       status: '',
       priority: '',
       blockedFilter: '',
+      dueFrom: '',
+      dueTo: '',
       sortBy: 'due_date',
       sortDir: 'asc',
     },
@@ -144,6 +146,12 @@
     if (state.filters.blockedFilter) {
       q.set('blockedFilter', state.filters.blockedFilter);
     }
+    if (state.filters.dueFrom) {
+      q.set('dueFrom', fromDatetimeLocal(state.filters.dueFrom));
+    }
+    if (state.filters.dueTo) {
+      q.set('dueTo', fromDatetimeLocal(state.filters.dueTo));
+    }
     q.set('sortBy', state.filters.sortBy);
     q.set('sortDir', state.filters.sortDir);
     return q.toString();
@@ -168,12 +176,20 @@
 
     var tbody = $('todoTbody');
     tbody.innerHTML = '';
+    var selAll = $('batchSelectAll');
+    if (selAll) {
+      selAll.checked = false;
+      selAll.indeterminate = false;
+    }
     records.forEach(function (row) {
       var tr = document.createElement('tr');
       var deps = row.dependsOnTodoIds;
       var depStr =
         Array.isArray(deps) && deps.length ? deps.join(', ') : '—';
       tr.innerHTML =
+        '<td class="col-cb"><input type="checkbox" class="batch-row-cb" data-id="' +
+        row.id +
+        '" /></td>' +
         '<td>' +
         escapeHtml(String(row.id)) +
         '</td>' +
@@ -205,6 +221,81 @@
         '</td>';
       tbody.appendChild(tr);
     });
+    updateBatchSelectedCount();
+  }
+
+  function getSelectedBatchIds() {
+    var boxes = document.querySelectorAll('#todoTbody .batch-row-cb:checked');
+    var ids = [];
+    boxes.forEach(function (cb) {
+      var id = parseInt(cb.getAttribute('data-id'), 10);
+      if (!isNaN(id)) {
+        ids.push(id);
+      }
+    });
+    return ids;
+  }
+
+  function updateBatchSelectedCount() {
+    var n = document.querySelectorAll('#todoTbody .batch-row-cb:checked').length;
+    var el = $('batchSelectedCount');
+    if (el) {
+      el.textContent = '已选 ' + n + ' 项';
+    }
+  }
+
+  function syncBatchSelectAllState() {
+    var all = document.querySelectorAll('#todoTbody .batch-row-cb');
+    var checked = document.querySelectorAll('#todoTbody .batch-row-cb:checked');
+    var el = $('batchSelectAll');
+    if (!el) {
+      return;
+    }
+    if (all.length === 0) {
+      el.checked = false;
+      el.indeterminate = false;
+      return;
+    }
+    if (checked.length === 0) {
+      el.checked = false;
+      el.indeterminate = false;
+    } else if (checked.length === all.length) {
+      el.checked = true;
+      el.indeterminate = false;
+    } else {
+      el.checked = false;
+      el.indeterminate = true;
+    }
+  }
+
+  async function submitBatchStatus() {
+    var ids = getSelectedBatchIds();
+    if (ids.length === 0) {
+      toast('请先勾选要批量修改的 TODO', true);
+      return;
+    }
+    var uid = getUserId();
+    var status = $('batchTargetStatus').value;
+    var body = {
+      ids: ids,
+      status: status,
+    };
+    if (uid != null) {
+      body.updatedBy = uid;
+    }
+    try {
+      await apiFetch(API + '/batch/status', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      toast('批量更新成功');
+      if ($('batchSelectAll')) {
+        $('batchSelectAll').checked = false;
+      }
+      await loadTodos();
+    } catch (e) {
+      toast(e.message || String(e), true);
+    }
   }
 
   function escapeHtml(s) {
@@ -265,6 +356,8 @@
     state.filters.status = $('filterStatus').value;
     state.filters.priority = $('filterPriority').value;
     state.filters.blockedFilter = $('filterBlocked').value;
+    state.filters.dueFrom = $('filterDueFrom').value || '';
+    state.filters.dueTo = $('filterDueTo').value || '';
     state.filters.sortBy = $('sortBy').value;
     state.filters.sortDir = $('sortDir').value;
     state.pageSize = parseInt($('pageSize').value, 10) || 20;
@@ -275,6 +368,8 @@
     $('filterStatus').value = state.filters.status;
     $('filterPriority').value = state.filters.priority;
     $('filterBlocked').value = state.filters.blockedFilter;
+    $('filterDueFrom').value = state.filters.dueFrom || '';
+    $('filterDueTo').value = state.filters.dueTo || '';
     $('sortBy').value = state.filters.sortBy;
     $('sortDir').value = state.filters.sortDir;
     $('pageSize').value = String(state.pageSize);
@@ -449,6 +544,24 @@
         deleteTodo(id);
       }
     });
+    $('todoTbody').addEventListener('change', function (ev) {
+      if (!ev.target.classList || !ev.target.classList.contains('batch-row-cb')) {
+        return;
+      }
+      updateBatchSelectedCount();
+      syncBatchSelectAllState();
+    });
+    $('batchSelectAll').onchange = function () {
+      var on = $('batchSelectAll').checked;
+      document.querySelectorAll('#todoTbody .batch-row-cb').forEach(function (cb) {
+        cb.checked = on;
+      });
+      updateBatchSelectedCount();
+      $('batchSelectAll').indeterminate = false;
+    };
+    $('btnBatchStatus').onclick = function () {
+      submitBatchStatus();
+    };
     $('createIsRecurring').onchange = toggleCreateRecurrence;
     $('formCreate').onsubmit = onCreateSubmit;
     $('formEdit').onsubmit = onEditSubmit;
